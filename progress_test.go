@@ -2,6 +2,7 @@ package progress_test
 
 import (
 	"bufio"
+	"bytes"
 	"fmt"
 	"os"
 	"testing"
@@ -58,12 +59,42 @@ func TestProgress(t *testing.T) {
 	}
 }
 
+func TestProgressFixed(t *testing.T) {
+	testProgressFixed(t, time.Millisecond, 1)
+	testProgressFixed(t, 100*time.Millisecond, 100)
+}
+
+func testProgressFixed(t *testing.T, timestep time.Duration, value int64) {
+	var dump []elem
+
+	var tt time.Duration
+	for ; tt < 60*time.Second; tt += timestep {
+		dump = append(dump, elem{
+			t: tt,
+			v: value,
+		})
+	}
+
+	// append last element to have fixed total length
+	dump = append(dump, elem{
+		t: tt,
+		v: 0,
+	})
+
+	t.Logf("test fixed %d/%s", value, timestep)
+	testProgressDump(t, dump)
+}
+
 func testProgressDump(t *testing.T, h []elem) {
 	var total int64
 	for _, e := range h {
 		total += e.v
 	}
-	tt := h[len(h)-1].t
+
+	t.Logf("total=%d", total)
+	const res = 100 * time.Millisecond
+
+	maxt := h[len(h)-1].t
 	epoch := time.Date(2010, 1, 1, 0, 0, 0, 0, time.Local)
 	var ct time.Duration
 
@@ -71,12 +102,42 @@ func testProgressDump(t *testing.T, h []elem) {
 		return epoch.Add(ct)
 	}))
 
-	const res = time.Duration(100 * time.Millisecond)
+	trueend := epoch.Add(maxt)
 
+	lastt := time.Duration(0)
 	for _, e := range h {
 		ct = e.t
 		p.Update(e.v)
-		rem := tt - ct
-		t.Logf("%s %s\n", rem.Truncate(res), p.Status())
+		curt := ct.Truncate(res)
+		if curt != lastt {
+			lastt = curt
+
+			s := p.Status()
+			var diffs string
+			tr, ok := s.TimeRemaining()
+			if ok {
+				end := epoch.Add(ct + tr)
+				diff := end.Sub(trueend).Truncate(time.Second)
+				diffs = diff.String()
+				if diff >= 0 {
+					diffs = "+" + diffs
+				}
+			}
+			rem := (maxt - curt).Truncate(res)
+			t.Logf("%10s %10s %s", rem, diffs, s)
+		}
 	}
+}
+
+func int64SliceString(vv []int64) string {
+	buf := &bytes.Buffer{}
+	buf.WriteString("[")
+	for i, v := range vv {
+		if i != 0 {
+			buf.WriteString(",")
+		}
+		fmt.Fprintf(buf, "%d", v)
+	}
+	buf.WriteString("]")
+	return buf.String()
 }

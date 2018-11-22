@@ -16,6 +16,9 @@ type Progress struct {
 	elem []elem // collected samples
 	w, r int    // sample write/read index
 
+	sumv int64 // running sum of []elem.v
+	done int64 // update sum
+
 	status Status
 }
 
@@ -24,7 +27,7 @@ type elem struct {
 	t time.Duration
 }
 
-const resolution = time.Duration(100 * time.Millisecond)
+const resolution = time.Duration(25 * time.Millisecond)
 
 func New(total int64, option ...Option) *Progress {
 	p := &Progress{
@@ -58,24 +61,32 @@ func (p *Progress) Status() Status {
 func (p *Progress) Update(v int64) {
 	t := p.nowf().Sub(p.start).Truncate(resolution)
 	p.add(t, v)
+
+	p.sumv += v
+	p.done += v
 }
 
 func (p *Progress) add(t time.Duration, v int64) {
-	//log.Printf("add %s %d", t, v)
-	p.status.V += v
-	p.status.Done += v
 	if t <= p.elem[p.w].t {
 		p.elem[p.w].v += v
 		return
 	}
+
+	p.status.Done = p.done
+	p.status.V = p.sumv
+	if t >= p.window {
+		p.status.Acc = true
+		p.status.Dt = p.window
+	} else {
+		p.status.Dt = t
+	}
+
 	p.incw()
 	p.elem[p.w] = elem{t: t, v: v}
 	st := t - p.window
-	for p.r != p.w && p.elem[p.r].t < st {
+	for p.r != p.w && p.elem[p.r].t <= st {
 		p.incr()
 	}
-	p.status.Dt = t - p.elem[p.r].t
-	//log.Printf("%d/%s", p.status.V, p.status.Dt)
 }
 
 func (p *Progress) incw() {
@@ -86,13 +97,17 @@ func (p *Progress) incw() {
 }
 
 func (p *Progress) incr() {
-	p.status.V -= p.elem[p.r].v
+	p.sumv -= p.elem[p.r].v
 	p.r = (p.r + 1) % len(p.elem)
 }
 
 type Status struct {
 	Done  int64
 	Total int64
+
+	// Acc is set when accuracy should be adequate.
+	// It is set once enough progress data is collected.
+	Acc bool
 
 	// V/Dt is throughput
 	V  int64
@@ -110,14 +125,14 @@ func (s Status) TimeRemaining() (time.Duration, bool) {
 		return 0, false // inaccurate/unknown
 	}
 	t := time.Duration(left / throughput * float64(time.Second))
-	return t.Truncate(time.Second), true
+	return t.Truncate(time.Second), s.Acc
 }
 
 func (s Status) String() string {
 	buf := new(bytes.Buffer)
 	if s.Total > 0 {
 		r := float64(s.Done) / float64(s.Total)
-		fmt.Fprintf(buf, "%7.2f%% ", float64(r)*100)
+		fmt.Fprintf(buf, "%7.2f%%  ", float64(r)*100)
 	}
 
 	var throughput float64
@@ -134,17 +149,19 @@ func (s Status) String() string {
 
 	switch {
 	case tp <= 0:
-		buf.WriteString("0")
+		buf.WriteString("0 ")
 	case tp < 10:
-		fmt.Fprintf(buf, "%.1f%s", tp, sbsuffix[sfxi])
+		fmt.Fprintf(buf, "%.1f %s", tp, sbsuffix[sfxi])
 	default:
-		fmt.Fprintf(buf, "%.0f%s", tp, sbsuffix[sfxi])
+		fmt.Fprintf(buf, "%.0f %s", tp, sbsuffix[sfxi])
 	}
 	buf.WriteString("B/s")
 
-	r, ok := s.TimeRemaining()
-	if ok {
-		fmt.Fprintf(buf, " ETA %s", r)
+	if s.Acc {
+		r, ok := s.TimeRemaining()
+		if ok {
+			fmt.Fprintf(buf, "  ETA %s", r)
+		}
 	}
 
 	return buf.String()
