@@ -114,9 +114,8 @@ func testProgressDump(t *testing.T, h []elem) {
 
 			s := p.Status()
 			var diffs string
-			tr, ok := s.TimeRemaining()
-			if ok {
-				end := epoch.Add(ct + tr)
+			if s.TimeLeft != 0 {
+				end := epoch.Add(ct + s.TimeLeft)
 				diff := end.Sub(trueend).Truncate(time.Second)
 				diffs = diff.String()
 				if diff >= 0 {

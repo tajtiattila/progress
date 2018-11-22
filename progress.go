@@ -19,6 +19,8 @@ type Progress struct {
 	sumv int64 // running sum of []elem.v
 	done int64 // update sum
 
+	favg weightValueAvg // average finished time calculator
+
 	status Status
 }
 
@@ -27,12 +29,15 @@ type elem struct {
 	t time.Duration
 }
 
-const resolution = time.Duration(25 * time.Millisecond)
+const resolution = time.Duration(100 * time.Millisecond)
 
 func New(total int64, option ...Option) *Progress {
 	p := &Progress{
 		nowf:   time.Now,
 		window: 5 * time.Second,
+		favg: weightValueAvg{
+			v: make([]weightValue, 8),
+		},
 		status: Status{
 			Total: total,
 		},
@@ -72,6 +77,17 @@ func (p *Progress) add(t time.Duration, v int64) {
 		return
 	}
 
+	p.updateStatus(p.elem[p.w].t, t)
+
+	p.incw()
+	p.elem[p.w] = elem{t: t, v: v}
+	st := t - p.window
+	for p.r != p.w && p.elem[p.r].t <= st {
+		p.incr()
+	}
+}
+
+func (p *Progress) updateStatus(lastt, t time.Duration) {
 	p.status.Done = p.done
 	p.status.V = p.sumv
 	if t >= p.window {
@@ -81,11 +97,27 @@ func (p *Progress) add(t time.Duration, v int64) {
 		p.status.Dt = t
 	}
 
-	p.incw()
-	p.elem[p.w] = elem{t: t, v: v}
-	st := t - p.window
-	for p.r != p.w && p.elem[p.r].t <= st {
-		p.incr()
+	if p.status.Total <= 0 {
+		return
+	}
+
+	// calculate finished time
+	left, ok := p.status.timeLeft()
+	if !ok {
+		return
+	}
+
+	finish := int64((t + left) / resolution)
+	confidence := int64((t - lastt) / resolution)
+	p.favg.add(confidence, finish)
+
+	if t < p.window {
+		return
+	}
+
+	if finish, ok = p.favg.value(); ok {
+		p.status.TimeLeft = time.Duration(finish)*resolution - t
+		p.status.ETA = p.start.Add(p.status.TimeLeft)
 	}
 }
 
@@ -109,12 +141,15 @@ type Status struct {
 	// It is set once enough progress data is collected.
 	Acc bool
 
+	TimeLeft time.Duration // remaining time
+	ETA      time.Time     // expected time when Done reaches Total
+
 	// V/Dt is throughput
 	V  int64
 	Dt time.Duration
 }
 
-func (s Status) TimeRemaining() (time.Duration, bool) {
+func (s Status) timeLeft() (time.Duration, bool) {
 	if s.Total <= 0 || s.Dt <= 0 {
 		return 0, false // unknown
 	}
@@ -125,7 +160,7 @@ func (s Status) TimeRemaining() (time.Duration, bool) {
 		return 0, false // inaccurate/unknown
 	}
 	t := time.Duration(left / throughput * float64(time.Second))
-	return t.Truncate(time.Second), s.Acc
+	return t, true
 }
 
 func (s Status) String() string {
@@ -157,11 +192,8 @@ func (s Status) String() string {
 	}
 	buf.WriteString("B/s")
 
-	if s.Acc {
-		r, ok := s.TimeRemaining()
-		if ok {
-			fmt.Fprintf(buf, "  ETA %s", r)
-		}
+	if s.TimeLeft > 0 {
+		fmt.Fprintf(buf, "  ETA %s", s.TimeLeft.Truncate(time.Second))
 	}
 
 	return buf.String()
@@ -174,4 +206,43 @@ var sbsuffix = []string{
 	"Gi",
 	"Ti",
 	"Ei",
+}
+
+type weightValue struct {
+	weight int64
+	value  int64
+}
+
+type weightValueAvg struct {
+	v    []weightValue
+	w, r int
+
+	sum weightValue
+}
+
+func (x *weightValueAvg) add(weight, value int64) {
+	if weight <= 0 {
+		return
+	}
+
+	x.w = (x.w + 1) % len(x.v)
+	if x.w == x.r {
+		elem := x.v[x.r]
+		x.sum.weight -= elem.weight
+		x.sum.value -= elem.value * elem.weight
+		x.r = (x.r + 1) % len(x.v)
+	}
+
+	x.v[x.w].weight = weight
+	x.v[x.w].value = value
+
+	x.sum.weight += weight
+	x.sum.value += value * weight
+}
+
+func (x *weightValueAvg) value() (int64, bool) {
+	if x.sum.weight <= 0 {
+		return 0, false
+	}
+	return x.sum.value / x.sum.weight, true
 }
