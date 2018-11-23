@@ -7,9 +7,9 @@ import (
 )
 
 type Progress struct {
-	start time.Time
+	start time.Time // start time
 
-	nowf func() time.Time
+	nowf func() time.Time // nowf gets the current time
 
 	window time.Duration // sampling window
 
@@ -21,7 +21,7 @@ type Progress struct {
 
 	favg weightValueAvg // average finished time calculator
 
-	status Status
+	status Status // current status
 }
 
 type elem struct {
@@ -29,8 +29,10 @@ type elem struct {
 	t time.Duration
 }
 
+// resolution is the time period for collecting progress value data.
 const resolution = time.Duration(100 * time.Millisecond)
 
+// New creates a new progress calculator for the total given.
 func New(total int64, option ...Option) *Progress {
 	p := &Progress{
 		nowf:   time.Now,
@@ -59,22 +61,29 @@ func New(total int64, option ...Option) *Progress {
 	return p
 }
 
+// Status returns the current status of p.
 func (p *Progress) Status() Status {
 	return p.status
 }
 
-func (p *Progress) Update(v int64) {
+// Update updates p.
+//
+// It returns true if p.Status() has changed.
+func (p *Progress) Update(v int64) bool {
 	t := p.nowf().Sub(p.start).Truncate(resolution)
-	p.add(t, v)
+
+	statusChange := p.add(t, v)
 
 	p.sumv += v
 	p.done += v
+
+	return statusChange
 }
 
-func (p *Progress) add(t time.Duration, v int64) {
+func (p *Progress) add(t time.Duration, v int64) bool {
 	if t <= p.elem[p.w].t {
 		p.elem[p.w].v += v
-		return
+		return false
 	}
 
 	p.updateStatus(p.elem[p.w].t, t)
@@ -85,6 +94,8 @@ func (p *Progress) add(t time.Duration, v int64) {
 	for p.r != p.w && p.elem[p.r].t <= st {
 		p.incr()
 	}
+
+	return true
 }
 
 func (p *Progress) updateStatus(lastt, t time.Duration) {
@@ -133,9 +144,10 @@ func (p *Progress) incr() {
 	p.r = (p.r + 1) % len(p.elem)
 }
 
+// Status represents progress status.
 type Status struct {
-	Done  int64
-	Total int64
+	Done  int64 // data processed
+	Total int64 // total data
 
 	// Acc is set when accuracy should be adequate.
 	// It is set once enough progress data is collected.
@@ -163,12 +175,15 @@ func (s Status) timeLeft() (time.Duration, bool) {
 	return t, true
 }
 
+// String returns the current status as a string.
 func (s Status) String() string {
 	buf := new(bytes.Buffer)
 	if s.Total > 0 {
 		r := float64(s.Done) / float64(s.Total)
 		fmt.Fprintf(buf, "%7.2f%%  ", float64(r)*100)
 	}
+
+	// TODO(ata): show s.Done if s.Total is zero
 
 	var throughput float64
 	if s.Dt > 0 {

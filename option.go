@@ -2,6 +2,7 @@ package progress
 
 import "time"
 
+// Option is an option for New.
 type Option interface {
 	update(*Progress)
 }
@@ -12,12 +13,17 @@ func (f optf) update(p *Progress) {
 	f(p)
 }
 
+// NowFunc uses the provided function
+// instead of time.Now to get the current time.
+//
+// It is intended for testing and debugging.
 func NowFunc(now func() time.Time) Option {
 	return optf(func(p *Progress) {
 		p.nowf = now
 	})
 }
 
+// SampleWindow sets the sample window duration to d.
 func SampleWindow(d time.Duration) Option {
 	return optf(func(p *Progress) {
 		p.window = d
