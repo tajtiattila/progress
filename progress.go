@@ -127,8 +127,9 @@ func (p *Progress) updateStatus(lastt, t time.Duration) {
 	}
 
 	if finish, ok = p.favg.value(); ok {
-		p.status.TimeLeft = time.Duration(finish)*resolution - t
-		p.status.ETA = p.start.Add(p.status.TimeLeft)
+		f := time.Duration(finish) * resolution
+		p.status.TimeLeft = f - t
+		p.status.ETA = p.start.Add(f)
 	}
 }
 
