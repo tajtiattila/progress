@@ -9,7 +9,8 @@ import (
 type Progress struct {
 	start time.Time // start time
 
-	nowf func() time.Time // nowf gets the current time
+	nowf           func() time.Time // nowf gets the current time
+	statusCallback func(Status)     // optional status callback
 
 	window time.Duration // sampling window
 
@@ -66,9 +67,12 @@ func (p *Progress) Status() Status {
 	return p.status
 }
 
-// Update updates p.
+// Update updates p with v.
 //
 // It returns true if p.Status() has changed.
+//
+// If p was created with a StatusFunc and the status has changed,
+// it is called with the updated status.
 func (p *Progress) Update(v int64) bool {
 	t := p.nowf().Sub(p.start).Truncate(resolution)
 
@@ -76,6 +80,10 @@ func (p *Progress) Update(v int64) bool {
 
 	p.sumv += v
 	p.done += v
+
+	if statusChange && p.statusCallback != nil {
+		p.statusCallback(p.status)
+	}
 
 	return statusChange
 }
@@ -193,7 +201,7 @@ func (s Status) String() string {
 
 	tp := throughput
 	sfxi := 0
-	for tp >= 1000 && sfxi+1 < len(sbsuffix) {
+	for tp > 999 && sfxi+1 < len(sbsuffix) {
 		sfxi++
 		tp /= 1000
 	}

@@ -29,3 +29,10 @@ func SampleWindow(d time.Duration) Option {
 		p.window = d
 	})
 }
+
+// StatusFunc calls f after every status change.
+func StatusFunc(f func(Status)) Option {
+	return optf(func(p *Progress) {
+		p.statusCallback = f
+	})
+}
